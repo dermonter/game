@@ -220,6 +220,9 @@ internal void Win32FillSoundBuffer(win32_sound_output* soundOutput, DWORD bytesT
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, INT nCmdShow)
 {
+    LARGE_INTEGER performanceFreq;
+    QueryPerformanceFrequency(&performanceFreq);
+
     WNDCLASSA WindowClass = {};
     WindowClass.style = CS_HREDRAW|CS_VREDRAW;
     WindowClass.lpfnWndProc = Win32MainWindowCallback;
@@ -254,6 +257,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
             int width = clientRect.right - clientRect.left;
             int height = clientRect.bottom - clientRect.top;
             Win32ResizeDIBSection(&globalBackBuffer, width, height);
+
+            LARGE_INTEGER lastCounter;
+            QueryPerformanceCounter(&lastCounter);
+            int64_t lastCycles = __rdtsc();
             while (running) {
                 MSG message;
                 while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
@@ -271,13 +278,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
                 if (SUCCEEDED(globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor))) {
                     DWORD bytesToWrite;
                     DWORD bytesToLock = (soundOutput.runningSampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
-                    if (bytesToLock == playCursor) {
-                        if (soundIsPlaying) {
-                            bytesToWrite = 0;
-                        } else {
-                            bytesToWrite = soundOutput.secondaryBufferSize;
-                        }
-                    } else if (bytesToLock > playCursor) {
+                    if (bytesToLock > playCursor) {
                         bytesToWrite = soundOutput.secondaryBufferSize - bytesToLock;
                         bytesToWrite += playCursor;
                     } else {
@@ -297,6 +298,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
                 GetClientRect(windowHandle, &clientRect);
                 Win32UpdateWindow(&globalBackBuffer, deviceContext, clientRect);
                 ReleaseDC(windowHandle, deviceContext);
+                
+                int64_t endCycles = __rdtsc();
+                LARGE_INTEGER endCounter;
+                QueryPerformanceCounter(&endCounter);
+
+                int64_t counterElapsed = endCounter.QuadPart - lastCounter.QuadPart;
+                int64_t cyclesElapsed = endCycles - lastCycles;
+
+                int32_t msPerFrame = (1000 * counterElapsed) / performanceFreq.QuadPart;
+                int32_t fps = performanceFreq.QuadPart / counterElapsed;
+                int32_t mcpf = (int32_t)(cyclesElapsed / (1000 * 1000));
+
+                char buffer[256];
+                wsprintfA(buffer, "%dms/f, %dFPS, %dMc/f\n", msPerFrame, fps, cyclesElapsed / (1000 * 1000));
+                OutputDebugStringA(buffer);
+
+                lastCycles = endCycles;
+                lastCounter = endCounter;
             }
         }
     }
