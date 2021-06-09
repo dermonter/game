@@ -208,6 +208,46 @@ internal void Win32ClearSoundBuffer(win32_sound_output* soundOutput) {
     }
 }
 
+void* PlatformReadEntireFile(char* filename) {
+    void* result = 0;
+    HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if (file) {
+        LARGE_INTEGER fileSize;
+        if (GetFileSizeEx(file, &fileSize)) {
+            assert(fileSize.QuadPart <= 0xffffffff)
+            result = VirtualAlloc(0, fileSize.QuadPart, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            if (result) {
+                DWORD bytesRead;
+                uint32_t sizeTruc = SafeUIntTrucate(fileSize.QuadPart);
+                if (ReadFile(file, result, sizeTruc, &bytesRead, 0) && (bytesRead == sizeTruc)) {
+                    // SUCCESS
+                } else {
+                    PlatformFreeEntireFile(result);
+                }
+            }
+        }
+
+        CloseHandle(file);
+    }
+    return result;
+}
+
+void PlatformFreeEntireFile(void* memory) {
+    VirtualFree(memory, 0, MEM_RELEASE);
+}
+
+bool32_t PlatformWriteEntireFile(char* filename, uint32_t memorySize, void* memory) {
+    bool result;
+    HANDLE file = CreateFileA(filename, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
+    if (file) {
+        DWORD bytesWritten;
+        result = WriteFile(file, memory, memorySize, &bytesWritten, 0);
+
+        CloseHandle(file);
+    }
+    return result;
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine, INT nCmdShow)
 {
     LARGE_INTEGER performanceFreq;
@@ -239,6 +279,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
 
             Win32InitSound(windowHandle, soundOutput.samplesPerSecond, soundOutput.secondaryBufferSize);
             Win32ClearSoundBuffer(&soundOutput);
+
+#if SLOW
+            LPVOID baseAddress = (LPVOID)TERA_BYTES((uint64_t)2);
+#else
+            LPVOID baseAddress = 0;
+#endif
+            game_memory gameMemory = {};
+            gameMemory.transientStorageSize = GIGA_BYTES((uint64_t)4);
+            gameMemory.permanentStorageSize = MEGA_BYTES(64);
+            uint64_t totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
+            gameMemory.transientStorage = VirtualAlloc(baseAddress, totalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+            gameMemory.permanentStorage = (int8_t*)gameMemory.transientStorage + gameMemory.transientStorageSize;
+            if (!gameMemory.permanentStorage || !gameMemory.transientStorage) return 1;
 
             running = true;
             RECT clientRect;
@@ -288,7 +341,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
                 soundBuffer.samplesPerSecond = soundOutput.samplesPerSecond;
                 soundBuffer.sampleCount = bytesToWrite / soundOutput.bytesPerSample;
                 soundBuffer.samples = samples;
-                GameUpdateAndRender(&gameBuffer, &soundBuffer);
+                GameUpdateAndRender(&gameMemory, &gameBuffer, &soundBuffer);
 
                 if (soundIsValid) {
                     Win32FillSoundBuffer(&soundOutput, bytesToLock, bytesToWrite, &soundBuffer);
