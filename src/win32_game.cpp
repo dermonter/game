@@ -1,3 +1,4 @@
+#include "game.hpp"
 #include "game.cpp"
 
 #include <windows.h>
@@ -133,7 +134,7 @@ internal LRESULT Win32MainWindowCallback(HWND window, UINT message, WPARAM wPara
     case WM_SYSKEYUP:
     case WM_KEYDOWN:
     case WM_KEYUP: {
-        uint32_t vkCode = wParam;
+        uint32_t vkCode = (uint32_t)wParam;
         bool wasDown = ((lParam & (1 << 31)) != 0);
         bool isDown = ((lParam & (1 << 31)) == 0);
         if (wasDown == isDown) break;
@@ -237,7 +238,7 @@ void PlatformFreeEntireFile(void* memory) {
 }
 
 bool32_t PlatformWriteEntireFile(char* filename, uint32_t memorySize, void* memory) {
-    bool result;
+    bool result = false;
     HANDLE file = CreateFileA(filename, GENERIC_WRITE, 0, 0, CREATE_ALWAYS, 0, 0);
     if (file) {
         DWORD bytesWritten;
@@ -286,7 +287,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
             LPVOID baseAddress = 0;
 #endif
             game_memory gameMemory = {};
-            gameMemory.transientStorageSize = GIGA_BYTES((uint64_t)4);
+            gameMemory.transientStorageSize = GIGA_BYTES((uint64_t)1);
             gameMemory.permanentStorageSize = MEGA_BYTES(64);
             uint64_t totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
             gameMemory.transientStorage = VirtualAlloc(baseAddress, totalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
@@ -315,8 +316,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
 
                 DWORD playCursor;
                 DWORD writeCursor;
-                DWORD bytesToWrite;
-                DWORD bytesToLock;
+                DWORD bytesToWrite = 0;
+                DWORD bytesToLock = 0;
                 bool32_t soundIsValid = false;
                 if (SUCCEEDED(globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor))) {
                     DWORD targetCursor = (playCursor + soundOutput.bytesPerSample * soundOutput.latencySampleCount) % soundOutput.secondaryBufferSize;
@@ -365,8 +366,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
                 int64_t counterElapsed = endCounter.QuadPart - lastCounter.QuadPart;
                 int64_t cyclesElapsed = endCycles - lastCycles;
 
-                int32_t msPerFrame = (1000 * counterElapsed) / performanceFreq.QuadPart;
-                int32_t fps = performanceFreq.QuadPart / counterElapsed;
+                int32_t msPerFrame = (int32_t)((1000 * counterElapsed) / performanceFreq.QuadPart);
+                int32_t fps = (int32_t)(performanceFreq.QuadPart / counterElapsed);
                 int32_t mcpf = (int32_t)(cyclesElapsed / (1000 * 1000));
 
 #if 0

@@ -6,7 +6,7 @@ internal void RenderGradient(game_offscreen_buffer* buffer) {
         uint32_t* pixel = (uint32_t*)row;
         for (int x = 0; x < buffer->width; ++x) {
             uint8_t g = (uint8_t)x;
-            uint8_t b = buffer->height - (uint8_t)y;
+            uint8_t b = (uint8_t)buffer->height - (uint8_t)y;
             // xx RR GG BB
             *pixel++ = (g << 16) | b;
         }
