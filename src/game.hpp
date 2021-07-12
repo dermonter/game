@@ -58,7 +58,8 @@ inline uint32_t SafeUIntTrucate(uint64_t val) {
 /*
 Services the game provides to the platform layer
 */
-void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer, game_sound_buffer_output* soundBuffer);
+internal void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer);
+internal void GameGetSoundSamples(game_memory* memory, game_sound_buffer_output* soundBuffer);
 
 /*
 Services the platform layer provides to the game

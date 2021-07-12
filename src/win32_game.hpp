@@ -8,7 +8,7 @@ struct win32_sound_output {
     uint32_t runningSampleIndex;
     int bytesPerSample;
     int secondaryBufferSize;
-    int latencySampleCount;
+    int safetyBytes;
 };
 
 struct win32_offscreen_buffer {

@@ -29,7 +29,18 @@ internal void GameOutputSound(game_state* gameState, game_sound_buffer_output* b
     }
 }
 
-void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer, game_sound_buffer_output* soundBuffer) {
+internal void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer) {
+    assert(sizeof(game_state) <= memory->permanentStorageSize);
+    game_state* gameState = (game_state*)memory->permanentStorage;
+
+    if (!memory->initialized) {
+        memory->initialized = true;
+    }
+
+    RenderGradient(buffer);
+}
+
+internal void GameGetSoundSamples(game_memory* memory, game_sound_buffer_output* soundBuffer) {
     assert(sizeof(game_state) <= memory->permanentStorageSize);
     game_state* gameState = (game_state*)memory->permanentStorage;
 
@@ -38,6 +49,4 @@ void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer, gam
     }
 
     GameOutputSound(gameState, soundBuffer);
-
-    RenderGradient(buffer);
 }
