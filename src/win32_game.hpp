@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <windows.h>
 
+#define DEFAULT_WIDTH 968
+#define DEFAULT_HEIGHT 540
+
 struct win32_sound_output {
     int samplesPerSecond;
     uint32_t runningSampleIndex;
@@ -12,6 +15,7 @@ struct win32_sound_output {
 };
 
 struct win32_offscreen_buffer {
+    HGLRC openGLRenderingContext;
     BITMAPINFO info;
     void* memory;
     int32_t width;

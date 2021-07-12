@@ -5,6 +5,11 @@
 #include <windows.h>
 #include <dsound.h>
 
+#if WIN32_OPEN_GL
+#define GLEW_STATIC
+#include "glew/glew.c"
+#endif
+
 #include "win32_game.hpp"
 
 #define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter);
@@ -86,6 +91,12 @@ internal void Win32ResizeDIBSection(win32_offscreen_buffer* buffer, int width, i
 }
 
 internal void Win32UpdateWindow(win32_offscreen_buffer* buffer, HDC deviceContext, RECT windowRect) {
+#if WIN32_OPEN_GL
+    bool32_t is_true = true;
+    if (is_true) {
+        return;
+    }
+#endif
     int windowWidth = windowRect.right - windowRect.left;
     int windowHeight = windowRect.bottom - windowRect.top;
     StretchDIBits(deviceContext,
@@ -99,6 +110,49 @@ internal LRESULT Win32MainWindowCallback(HWND window, UINT message, WPARAM wPara
 
     switch (message)
     {
+#if WIN32_OPEN_GL
+    case WM_CREATE: {
+        PIXELFORMATDESCRIPTOR pfd =
+		{
+			sizeof(PIXELFORMATDESCRIPTOR),
+			1,
+			PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,    //Flags
+			PFD_TYPE_RGBA,        // The kind of framebuffer. RGBA or palette.
+			32,                   // Colordepth of the framebuffer.
+			0, 0, 0, 0, 0, 0,
+			0,
+			0,
+			0,
+			0, 0, 0, 0,
+			24,                   // Number of bits for the depthbuffer
+			8,                    // Number of bits for the stencilbuffer
+			0,                    // Number of Aux buffers in the framebuffer.
+			PFD_MAIN_PLANE,
+			0,
+			0, 0, 0
+		};
+
+		HDC ourWindowHandleToDeviceContext = GetDC(window);
+
+		int  letWindowsChooseThisPixelFormat;
+		letWindowsChooseThisPixelFormat = ChoosePixelFormat(ourWindowHandleToDeviceContext, &pfd); 
+		SetPixelFormat(ourWindowHandleToDeviceContext,letWindowsChooseThisPixelFormat, &pfd);
+
+		globalBackBuffer.openGLRenderingContext = wglCreateContext(ourWindowHandleToDeviceContext);
+		wglMakeCurrent(ourWindowHandleToDeviceContext, globalBackBuffer.openGLRenderingContext);
+
+        GLenum err = glewInit();
+        if (GLEW_OK != err) {
+            OutputDebugStringA("Failed to initialize GLEW");
+            fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
+            return 1;
+        }
+
+		// MessageBoxA(0,(char*)glGetString(GL_VERSION), "OPENGL VERSION",0);
+
+		//wglMakeCurrent(ourWindowHandleToDeviceContext, NULL); Unnecessary; wglDeleteContext will make the context not current
+    }
+#endif
     case WM_SIZE: {
     } break;
     case WM_DESTROY:
@@ -291,7 +345,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
     globalPerfFreq = performanceFreq.QuadPart;
 
     WNDCLASSA WindowClass = {};
-    WindowClass.style = CS_HREDRAW|CS_VREDRAW;
+    WindowClass.style = CS_HREDRAW|CS_VREDRAW|CS_OWNDC;
     WindowClass.lpfnWndProc = Win32MainWindowCallback;
     WindowClass.hInstance = hInstance;
     // HICON hIcon;
@@ -311,189 +365,196 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
     int debugPlayCursorIndex = 0;
 #endif
 
-    if (RegisterClassA(&WindowClass)) {
-        HWND windowHandle = CreateWindowExA(0,
-            WindowClass.lpszClassName,
-            "Fap Master",
-            WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-            CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-            0, 0, hInstance, 0);
-        if (windowHandle) {
-            // Sound Test
-            win32_sound_output soundOutput = {};
-            soundOutput.samplesPerSecond = 48000;
-            soundOutput.runningSampleIndex = 0;
-            soundOutput.bytesPerSample = sizeof(int16_t) * 2;
-            soundOutput.secondaryBufferSize = soundOutput.samplesPerSecond * soundOutput.bytesPerSample;
-            soundOutput.safetyBytes = ((soundOutput.samplesPerSecond * soundOutput.bytesPerSample) / gameUpdateHz) / 3;
-            int16_t* samples = (int16_t*)VirtualAlloc(0, soundOutput.secondaryBufferSize, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
-
-            Win32InitSound(windowHandle, soundOutput.samplesPerSecond, soundOutput.secondaryBufferSize);
-            Win32ClearSoundBuffer(&soundOutput);
-
-#if SLOW
-            LPVOID baseAddress = (LPVOID)TERA_BYTES((uint64_t)2);
-#else
-            LPVOID baseAddress = 0;
-#endif
-            game_memory gameMemory = {};
-            gameMemory.transientStorageSize = GIGA_BYTES((uint64_t)1);
-            gameMemory.permanentStorageSize = MEGA_BYTES(64);
-            uint64_t totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
-            gameMemory.transientStorage = VirtualAlloc(baseAddress, totalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
-            gameMemory.permanentStorage = (int8_t*)gameMemory.transientStorage + gameMemory.transientStorageSize;
-            if (!gameMemory.permanentStorage || !gameMemory.transientStorage) return 1;
-
-            running = true;
-            RECT clientRect;
-            GetClientRect(windowHandle, &clientRect);
-            int width = clientRect.right - clientRect.left;
-            int height = clientRect.bottom - clientRect.top;
-            Win32ResizeDIBSection(&globalBackBuffer, width, height);
-
-            LARGE_INTEGER lastCounter = Win32GetWallClock();
-            uint64_t lastCycles = __rdtsc();
-            while (running) {
-                MSG message;
-                while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
-                    if (message.message == WM_QUIT) {
-                        running = false;
-                    }
-                    TranslateMessage(&message);
-                    DispatchMessage(&message);
-                }
-
-                // HANDLE INPUT OR I WILL DIE
-
-                game_offscreen_buffer gameBuffer = {};
-                gameBuffer.memory = globalBackBuffer.memory;
-                gameBuffer.width = globalBackBuffer.width;
-                gameBuffer.height = globalBackBuffer.height;
-                gameBuffer.pitch = globalBackBuffer.pitch;
-                GameUpdateAndRender(&gameMemory, &gameBuffer);
-
-                // Sound stuff
-                DWORD playCursor;
-                DWORD writeCursor;
-                if (globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK) {
-                    if (!soundIsValid) {
-                        soundOutput.runningSampleIndex = writeCursor / soundOutput.bytesPerSample;
-                        soundIsValid = true;
-                    }
-                    DWORD bytesToLock = (soundOutput.runningSampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
-
-                    DWORD expectedBytesPerFrame = (soundOutput.samplesPerSecond * soundOutput.bytesPerSample) / gameUpdateHz;
-                    DWORD expectedFrameBoundryByte = playCursor + expectedBytesPerFrame;
-                    DWORD safeWriteCursor = writeCursor;
-                    if (safeWriteCursor < playCursor) {
-                        safeWriteCursor += soundOutput.secondaryBufferSize;
-                    }
-                    assert(safeWriteCursor >= playCursor);
-                    safeWriteCursor += soundOutput.safetyBytes;
-                    bool32_t audioCardIsLowLatency = (safeWriteCursor < expectedFrameBoundryByte);
-
-                    DWORD targetCursor = 0;
-                    if (audioCardIsLowLatency) {
-                        targetCursor = (expectedFrameBoundryByte + expectedBytesPerFrame);
-                    } else {
-                        targetCursor = (safeWriteCursor + expectedBytesPerFrame);
-                    }
-                    targetCursor = targetCursor % soundOutput.secondaryBufferSize;
-
-                    DWORD bytesToWrite = 0;
-                    if (bytesToLock > targetCursor) {
-                        bytesToWrite = soundOutput.secondaryBufferSize - bytesToLock;
-                        bytesToWrite += targetCursor;
-                    } else {
-                        bytesToWrite = targetCursor - bytesToLock;
-                    }
-
-                    game_sound_buffer_output soundBuffer = {};
-                    soundBuffer.samplesPerSecond = soundOutput.samplesPerSecond;
-                    soundBuffer.sampleCount = bytesToWrite / soundOutput.bytesPerSample;
-                    soundBuffer.samples = samples;
-                    GameGetSoundSamples(&gameMemory, &soundBuffer);
-#if SLOW
-                    globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor);
-                    DWORD unwrappedWriteCursor = writeCursor;
-                    if (unwrappedWriteCursor < playCursor) {
-                        unwrappedWriteCursor += soundOutput.secondaryBufferSize;
-                    }
-
-                    DWORD bytesBufferDifference = unwrappedWriteCursor - playCursor;
-                    real32_t audioLatencySeconds = ((real32_t)bytesBufferDifference / (real32_t)soundOutput.bytesPerSample) /
-                        (real32_t)soundOutput.samplesPerSecond;
-
-                    char testBuffer[256];
-                    _snprintf_s(testBuffer, sizeof(testBuffer), "DELTA: %u, in seconds %fs\n", bytesBufferDifference, audioLatencySeconds);
-                    OutputDebugStringA(testBuffer);
-#endif
-                    Win32FillSoundBuffer(&soundOutput, bytesToLock, bytesToWrite, &soundBuffer);
-                } else {
-                    soundIsValid = false;
-                }
-
-                if (!soundIsPlaying) {
-                    globalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
-                    soundIsPlaying = true;
-                }
-                
-                uint64_t endCycles = __rdtsc();
-                LARGE_INTEGER workCounter = Win32GetWallClock();
-                real32_t workSecondsElapsed = Win32GetSecondsElapsed(lastCounter, workCounter);
-                real32_t secondsElapsedForFrame = workSecondsElapsed;
-
-                if (secondsElapsedForFrame < targetSecondsPerFrame) {
-                    if (sleepIsGranular) {
-                        DWORD sleepMs =  (DWORD)(1000.0f * (targetSecondsPerFrame - secondsElapsedForFrame));
-
-                        if (sleepMs > 0) {
-                            Sleep(sleepMs);
-                        }
-                    }
-
-                    real32_t testSecondsElapsed = Win32GetSecondsElapsed(lastCounter, Win32GetWallClock());
-                    // assert(testSecondsElapsed < targetSecondsPerFrame);
-                    while (secondsElapsedForFrame < targetSecondsPerFrame) {
-                        secondsElapsedForFrame = Win32GetSecondsElapsed(lastCounter, Win32GetWallClock());
-                    }
-                } else {
-                    // MISSED FRAMERATE WE FCKED UP HELP ME GOD PLEASE
-                    // TODO: help
-                }
-                LARGE_INTEGER endCounter = Win32GetWallClock();
-                real32_t sPerFrame = Win32GetSecondsElapsed(lastCounter, endCounter);
-                real32_t msPerFrame = 1000.0f * sPerFrame;
-                lastCounter = endCounter;
-
-#if SLOW
-                Win32DebugDisplayDebugSound(&globalBackBuffer, debugPlayCursors, arraySize(debugPlayCursors), &soundOutput, targetSecondsPerFrame);
-#endif
-
-                Win32DisplayBufferInWindow(windowHandle, &globalBackBuffer);
-
-#if SLOW
-                {
-                    assert(debugPlayCursorIndex < arraySize(debugPlayCursors));
-                    debugPlayCursors[debugPlayCursorIndex].playCursor = playCursor;
-                    debugPlayCursors[debugPlayCursorIndex++].writeCursor = writeCursor;
-                    if (debugPlayCursorIndex == arraySize(debugPlayCursors)) {
-                        debugPlayCursorIndex = 0;
-                    }
-                }
-#endif
-                uint64_t cyclesElapsed = endCycles - lastCycles;
-                lastCycles = endCycles;
-
-                real64_t fps = 1 / sPerFrame;
-                real64_t mcpf = (real64_t)cyclesElapsed / (1000.0f * 1000.0f);
-
-                char FPSbuffer[256];
-                _snprintf_s(FPSbuffer, sizeof(FPSbuffer), "%.02fms/f, %.02fFPS, %.02fMc/f\n", msPerFrame, fps, mcpf);
-                OutputDebugStringA(FPSbuffer);
-            }
-        }
+    if (!RegisterClassA(&WindowClass)) {
+        OutputDebugStringA("Failed to register a window class");
+        return 1;
     }
 
+    HWND windowHandle = CreateWindowExA(0,
+        WindowClass.lpszClassName,
+        "Fap Master",
+        WS_OVERLAPPEDWINDOW|WS_VISIBLE,
+        CW_USEDEFAULT, CW_USEDEFAULT, DEFAULT_WIDTH, DEFAULT_HEIGHT,
+        0, 0, hInstance, 0);
+    if (!windowHandle) {
+        OutputDebugStringA("Failed to initialize window handle");
+        return 1;
+    }
+
+    // Sound Test
+    win32_sound_output soundOutput = {};
+    soundOutput.samplesPerSecond = 48000;
+    soundOutput.runningSampleIndex = 0;
+    soundOutput.bytesPerSample = sizeof(int16_t) * 2;
+    soundOutput.secondaryBufferSize = soundOutput.samplesPerSecond * soundOutput.bytesPerSample;
+    soundOutput.safetyBytes = ((soundOutput.samplesPerSecond * soundOutput.bytesPerSample) / gameUpdateHz) / 3;
+    int16_t* samples = (int16_t*)VirtualAlloc(0, soundOutput.secondaryBufferSize, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
+
+    Win32InitSound(windowHandle, soundOutput.samplesPerSecond, soundOutput.secondaryBufferSize);
+    Win32ClearSoundBuffer(&soundOutput);
+
+#if SLOW
+    LPVOID baseAddress = (LPVOID)TERA_BYTES((uint64_t)2);
+#else
+    LPVOID baseAddress = 0;
+#endif
+    game_memory gameMemory = {};
+    gameMemory.transientStorageSize = GIGA_BYTES((uint64_t)1);
+    gameMemory.permanentStorageSize = MEGA_BYTES(64);
+    uint64_t totalSize = gameMemory.permanentStorageSize + gameMemory.transientStorageSize;
+    gameMemory.transientStorage = VirtualAlloc(baseAddress, totalSize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
+    gameMemory.permanentStorage = (int8_t*)gameMemory.transientStorage + gameMemory.transientStorageSize;
+    if (!gameMemory.permanentStorage || !gameMemory.transientStorage) return 1;
+
+    running = true;
+    RECT clientRect;
+    GetClientRect(windowHandle, &clientRect);
+    int width = clientRect.right - clientRect.left;
+    int height = clientRect.bottom - clientRect.top;
+    Win32ResizeDIBSection(&globalBackBuffer, width, height);
+
+    LARGE_INTEGER lastCounter = Win32GetWallClock();
+    uint64_t lastCycles = __rdtsc();
+    while (running) {
+        MSG message;
+        while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
+            if (message.message == WM_QUIT) {
+                running = false;
+            }
+            TranslateMessage(&message);
+            DispatchMessage(&message);
+        }
+
+        // HANDLE INPUT OR I WILL DIE
+
+        game_offscreen_buffer gameBuffer = {};
+        gameBuffer.memory = globalBackBuffer.memory;
+        gameBuffer.width = globalBackBuffer.width;
+        gameBuffer.height = globalBackBuffer.height;
+        gameBuffer.pitch = globalBackBuffer.pitch;
+        GameUpdateAndRender(&gameMemory, &gameBuffer);
+
+        // Sound stuff
+        DWORD playCursor;
+        DWORD writeCursor;
+        if (globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor) == DS_OK) {
+            if (!soundIsValid) {
+                soundOutput.runningSampleIndex = writeCursor / soundOutput.bytesPerSample;
+                soundIsValid = true;
+            }
+            DWORD bytesToLock = (soundOutput.runningSampleIndex * soundOutput.bytesPerSample) % soundOutput.secondaryBufferSize;
+
+            DWORD expectedBytesPerFrame = (soundOutput.samplesPerSecond * soundOutput.bytesPerSample) / gameUpdateHz;
+            DWORD expectedFrameBoundryByte = playCursor + expectedBytesPerFrame;
+            DWORD safeWriteCursor = writeCursor;
+            if (safeWriteCursor < playCursor) {
+                safeWriteCursor += soundOutput.secondaryBufferSize;
+            }
+            assert(safeWriteCursor >= playCursor);
+            safeWriteCursor += soundOutput.safetyBytes;
+            bool32_t audioCardIsLowLatency = (safeWriteCursor < expectedFrameBoundryByte);
+
+            DWORD targetCursor = 0;
+            if (audioCardIsLowLatency) {
+                targetCursor = (expectedFrameBoundryByte + expectedBytesPerFrame);
+            } else {
+                targetCursor = (safeWriteCursor + expectedBytesPerFrame);
+            }
+            targetCursor = targetCursor % soundOutput.secondaryBufferSize;
+
+            DWORD bytesToWrite = 0;
+            if (bytesToLock > targetCursor) {
+                bytesToWrite = soundOutput.secondaryBufferSize - bytesToLock;
+                bytesToWrite += targetCursor;
+            } else {
+                bytesToWrite = targetCursor - bytesToLock;
+            }
+
+            game_sound_buffer_output soundBuffer = {};
+            soundBuffer.samplesPerSecond = soundOutput.samplesPerSecond;
+            soundBuffer.sampleCount = bytesToWrite / soundOutput.bytesPerSample;
+            soundBuffer.samples = samples;
+            GameGetSoundSamples(&gameMemory, &soundBuffer);
+#if SLOW
+            globalSecondaryBuffer->GetCurrentPosition(&playCursor, &writeCursor);
+            DWORD unwrappedWriteCursor = writeCursor;
+            if (unwrappedWriteCursor < playCursor) {
+                unwrappedWriteCursor += soundOutput.secondaryBufferSize;
+            }
+
+            DWORD bytesBufferDifference = unwrappedWriteCursor - playCursor;
+            real32_t audioLatencySeconds = ((real32_t)bytesBufferDifference / (real32_t)soundOutput.bytesPerSample) /
+                (real32_t)soundOutput.samplesPerSecond;
+
+            char testBuffer[256];
+            _snprintf_s(testBuffer, sizeof(testBuffer), "DELTA: %u, in seconds %fs\n", bytesBufferDifference, audioLatencySeconds);
+            OutputDebugStringA(testBuffer);
+#endif
+            Win32FillSoundBuffer(&soundOutput, bytesToLock, bytesToWrite, &soundBuffer);
+        } else {
+            soundIsValid = false;
+        }
+
+        if (!soundIsPlaying) {
+            globalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
+            soundIsPlaying = true;
+        }
+        
+        uint64_t endCycles = __rdtsc();
+        LARGE_INTEGER workCounter = Win32GetWallClock();
+        real32_t workSecondsElapsed = Win32GetSecondsElapsed(lastCounter, workCounter);
+        real32_t secondsElapsedForFrame = workSecondsElapsed;
+
+        if (secondsElapsedForFrame < targetSecondsPerFrame) {
+            if (sleepIsGranular) {
+                DWORD sleepMs =  (DWORD)(1000.0f * (targetSecondsPerFrame - secondsElapsedForFrame));
+
+                if (sleepMs > 0) {
+                    Sleep(sleepMs);
+                }
+            }
+
+            real32_t testSecondsElapsed = Win32GetSecondsElapsed(lastCounter, Win32GetWallClock());
+            // assert(testSecondsElapsed < targetSecondsPerFrame);
+            while (secondsElapsedForFrame < targetSecondsPerFrame) {
+                secondsElapsedForFrame = Win32GetSecondsElapsed(lastCounter, Win32GetWallClock());
+            }
+        } else {
+            // MISSED FRAMERATE WE FCKED UP HELP ME GOD PLEASE
+            // TODO: help
+        }
+        LARGE_INTEGER endCounter = Win32GetWallClock();
+        real32_t sPerFrame = Win32GetSecondsElapsed(lastCounter, endCounter);
+        real32_t msPerFrame = 1000.0f * sPerFrame;
+        lastCounter = endCounter;
+
+#if SLOW
+        Win32DebugDisplayDebugSound(&globalBackBuffer, debugPlayCursors, arraySize(debugPlayCursors), &soundOutput, targetSecondsPerFrame);
+#endif
+
+        Win32DisplayBufferInWindow(windowHandle, &globalBackBuffer);
+
+#if SLOW
+        {
+            assert(debugPlayCursorIndex < arraySize(debugPlayCursors));
+            debugPlayCursors[debugPlayCursorIndex].playCursor = playCursor;
+            debugPlayCursors[debugPlayCursorIndex++].writeCursor = writeCursor;
+            if (debugPlayCursorIndex == arraySize(debugPlayCursors)) {
+                debugPlayCursorIndex = 0;
+            }
+        }
+#endif
+        uint64_t cyclesElapsed = endCycles - lastCycles;
+        lastCycles = endCycles;
+
+        real64_t fps = 1 / sPerFrame;
+        real64_t mcpf = (real64_t)cyclesElapsed / (1000.0f * 1000.0f);
+
+        char FPSbuffer[256];
+        _snprintf_s(FPSbuffer, sizeof(FPSbuffer), "%.02fms/f, %.02fFPS, %.02fMc/f\n", msPerFrame, fps, mcpf);
+        OutputDebugStringA(FPSbuffer);
+    }
+
+    wglDeleteContext(globalBackBuffer.openGLRenderingContext);
     return 0;
 }
