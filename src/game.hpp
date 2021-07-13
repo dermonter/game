@@ -17,12 +17,7 @@
 #define local_persist static
 #define internal static
 
-typedef double real64_t;
-typedef float real32_t;
-typedef int bool32_t;
-#define PI32 3.14159265359f
-#include <stdint.h>
-#include <math.h>
+#include "math.cpp"
 
 struct game_memory {
     bool32_t initialized;
@@ -32,8 +27,16 @@ struct game_memory {
     void* transientStorage;
 };
 
+struct game_input {
+    real32_t x;
+    real32_t y;
+};
+
 struct game_state {
     real32_t tSine;
+    int32_t playerX;
+    int32_t playerY;
+    int32_t playerSpeed;
 };
 
 struct game_offscreen_buffer {
@@ -58,13 +61,17 @@ inline uint32_t SafeUIntTrucate(uint64_t val) {
 /*
 Services the game provides to the platform layer
 */
-internal void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer);
+internal void GameUpdateAndRender(game_memory* memory, game_offscreen_buffer* buffer, game_input* input);
 internal void GameGetSoundSamples(game_memory* memory, game_sound_buffer_output* soundBuffer);
 
 /*
 Services the platform layer provides to the game
 */
-void* PlatformReadEntireFile(char* filename);
+struct read_file_result {
+    void* content;
+    uint32_t size;
+};
+read_file_result PlatformReadEntireFile(const char* filename);
 void PlatformFreeEntireFile(void* memory);
 bool32_t PlatformWriteEntireFile(char* filename, uint32_t memorySize, void* memory);
 

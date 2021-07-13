@@ -180,12 +180,6 @@ internal LRESULT Win32MainWindowCallback(HWND window, UINT message, WPARAM wPara
         if (wasDown == isDown) break;
         switch (vkCode)
         {
-        case 'W':
-        case 'A':
-        case 'S':
-        case 'D': {
-            
-        } break;
         case VK_ESCAPE: {
             if (isDown) {
                 running = false;
@@ -249,16 +243,16 @@ internal void Win32ClearSoundBuffer(win32_sound_output* soundOutput) {
     }
 }
 
-void* PlatformReadEntireFile(char* filename) {
+read_file_result PlatformReadEntireFile(const char* filename) {
     void* result = 0;
     HANDLE file = CreateFileA(filename, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    DWORD bytesRead = 0;
     if (file) {
         LARGE_INTEGER fileSize;
         if (GetFileSizeEx(file, &fileSize)) {
             assert(fileSize.QuadPart <= 0xffffffff)
             result = VirtualAlloc(0, fileSize.QuadPart, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);
             if (result) {
-                DWORD bytesRead;
                 uint32_t sizeTruc = SafeUIntTrucate(fileSize.QuadPart);
                 if (ReadFile(file, result, sizeTruc, &bytesRead, 0) && (bytesRead == sizeTruc)) {
                     // SUCCESS
@@ -270,7 +264,7 @@ void* PlatformReadEntireFile(char* filename) {
 
         CloseHandle(file);
     }
-    return result;
+    return {result, bytesRead};
 }
 
 void PlatformFreeEntireFile(void* memory) {
@@ -351,7 +345,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
     // HICON hIcon;
     WindowClass.lpszClassName = "Fap Master";
 
-#define framesOfAudioLatency 4
 #define monitorRefreshHz 144
 #define gameUpdateHz 30
     real32_t targetSecondsPerFrame = 1.0f / (real32_t)gameUpdateHz;
@@ -417,9 +410,34 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
     uint64_t lastCycles = __rdtsc();
     while (running) {
         MSG message;
+        game_input gameInput = {};
         while (PeekMessage(&message, 0, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
                 running = false;
+            } else if (message.message == WM_KEYDOWN) {
+                bool wasDown = ((message.lParam & (1 << 31)) != 0);
+                bool isDown = ((message.lParam & (1 << 31)) == 0);
+                if (wasDown == isDown) break;
+                switch(message.wParam) {
+                    case 'W': {
+                        gameInput.y = 1.0f;
+                    }
+                    break;
+                    case 'A': {
+                        gameInput.x = -1.0f;
+                    }
+                    break;
+                    case 'S': {
+                        gameInput.y = -1.0f;
+                    }
+                    break;
+                    case 'D': {
+                        gameInput.x = 1.0f;
+                    }
+                    break;
+                    default:
+                    break;
+                }
             }
             TranslateMessage(&message);
             DispatchMessage(&message);
@@ -432,7 +450,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
         gameBuffer.width = globalBackBuffer.width;
         gameBuffer.height = globalBackBuffer.height;
         gameBuffer.pitch = globalBackBuffer.pitch;
-        GameUpdateAndRender(&gameMemory, &gameBuffer);
+        GameUpdateAndRender(&gameMemory, &gameBuffer, &gameInput);
 
         // Sound stuff
         DWORD playCursor;
@@ -528,7 +546,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR lpCmdLine,
         real32_t msPerFrame = 1000.0f * sPerFrame;
         lastCounter = endCounter;
 
-#if SLOW
+#if 0
         Win32DebugDisplayDebugSound(&globalBackBuffer, debugPlayCursors, arraySize(debugPlayCursors), &soundOutput, targetSecondsPerFrame);
 #endif
 
